@@ -2,162 +2,275 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, View
 import datetime
-import os  # ✅ เพิ่ม import os
-from myserver import server_on  # ⚠️ ต้องมีไฟล์ myserver.py อยู่จริงนะ
+import os
+import json
+import asyncio
+from colorama import Fore, Style, init
+from myserver import server_on
 
-# --- ⚙️ การตั้งค่า ---
-# ไม่ควรใส่ Token ตรงนี้ ให้ไปใส่ใน Environment Secrets (ถ้ารันใน Replit)
-PREFIX = "!"
-LOG_CHANNEL_ID = 1437395517545123860 # 🔴 ID ห้อง Log
-WHITELIST = [1160547793782439976, 1303246365303898194]    # ID เจ้าของเซิร์ฟ
+# Initialize Colorama (ทำสี Terminal)
+init(autoreset=True)
 
-# ลิมิตความเร็ว
-LIMITS = {
-    "channel_create": {"max": 3, "seconds": 10},
-    "channel_delete": {"max": 3, "seconds": 10},
-    "role_create": {"max": 3, "seconds": 10},
-    "ban_member": {"max": 3, "seconds": 10},
-    "webhook": {"max": 2, "seconds": 10},
+# ==========================================
+# ⚙️ SYSTEM CONFIG (ตั้งค่าระบบหลัก)
+# ==========================================
+CONFIG = {
+    "PREFIX": "!",
+    "LOG_CHANNEL": 1437395517545123860, # 🔴 ใส่ ID ห้อง Log ของคุณที่นี่
+    "OWNER_ID": 1160547793782439976,    # 👑 ใส่ ID เจ้าของสูงสุด (กันพลาด)
+    
+    # 🛡️ ความไวในการจับ (Sensitivity)
+    # "max": จำนวนครั้งที่ทำได้, "seconds": ภายในกี่วินาที
+    "LIMITS": {
+        "channel_create": {"max": 3, "seconds": 10},
+        "channel_delete": {"max": 3, "seconds": 10},
+        "channel_update": {"max": 5, "seconds": 10},
+        "role_create":    {"max": 3, "seconds": 10},
+        "role_delete":    {"max": 2, "seconds": 10},
+        "role_update":    {"max": 5, "seconds": 10},
+        "ban_member":     {"max": 3, "seconds": 10},
+        "kick_member":    {"max": 3, "seconds": 10},
+        "webhook":        {"max": 1, "seconds": 60}, 
+        "guild_update":   {"max": 1, "seconds": 60},
+    }
 }
 
-tracker = {k: {} for k in LIMITS.keys()}
+# ไฟล์เก็บข้อมูล Whitelist (ไม่ต้องแก้โค้ดบ่อยๆ)
+DB_FILE = "whitelist.json"
 
+# ==========================================
+# 🛠️ CORE FUNCTIONS
+# ==========================================
+
+# โหลด Whitelist
+def load_whitelist():
+    if not os.path.exists(DB_FILE):
+        with open(DB_FILE, "w") as f:
+            json.dump([CONFIG["OWNER_ID"]], f)
+        return [CONFIG["OWNER_ID"]]
+    with open(DB_FILE, "r") as f:
+        return json.load(f)
+
+# บันทึก Whitelist
+def save_whitelist(ids):
+    with open(DB_FILE, "w") as f:
+        json.dump(ids, f)
+
+whitelist = load_whitelist()
+tracker = {k: {} for k in CONFIG["LIMITS"].keys()}
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix=PREFIX, intents=intents)
+bot = commands.Bot(command_prefix=CONFIG["PREFIX"], intents=intents, help_command=None)
 
-# --- 🔘 ส่วนของระบบปุ่ม (UI) ---
-class UnbanView(View):
-    def __init__(self, user_id, user_name):
-        super().__init__(timeout=None)
-        self.user_id = user_id
-        self.user_name = user_name
+# --- 🎨 CONSOLE UI (หน้าต่าง Hacker) ---
+def print_banner():
+    # เคลียร์หน้าจอ Terminal
+    os.system('cls' if os.name == 'nt' else 'clear')
+    banner = f"""
+    {Fore.CYAN}╔════════════════════════════════════════════╗
+    {Fore.CYAN}║     {Fore.MAGENTA}🛡️  CYBER SENTINEL ANTI-NUKE V3 {Fore.CYAN}     ║
+    {Fore.CYAN}╠════════════════════════════════════════════╣
+    {Fore.CYAN}║ {Fore.GREEN}● System Status: {Fore.WHITE}ONLINE                {Fore.CYAN}║
+    {Fore.CYAN}║ {Fore.GREEN}● Protection:    {Fore.WHITE}ACTIVE (MAXIMUM)      {Fore.CYAN}║
+    {Fore.CYAN}║ {Fore.GREEN}● Whitelisted:   {Fore.WHITE}{len(whitelist)} Users             {Fore.CYAN}║
+    {Fore.CYAN}╚════════════════════════════════════════════╝
+    {Style.RESET_ALL}
+    """
+    print(banner)
 
-    @discord.ui.button(label="🔓 ปลดแบนทันที (Unban)", style=discord.ButtonStyle.green, custom_id="unban_btn")
-    async def unban_button(self, interaction: discord.Interaction, button: Button):
-        if not interaction.user.guild_permissions.administrator and interaction.user.id not in WHITELIST:
-            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์กดปุ่มนี้", ephemeral=True)
-            return
-
-        guild = interaction.guild
-        try:
-            user = await bot.fetch_user(self.user_id)
-            await guild.unban(user, reason=f"Unbanned by {interaction.user} via Button")
-            
-            button.label = f"✅ ปลดแบน {self.user_name} แล้ว"
-            button.disabled = True
-            button.style = discord.ButtonStyle.grey
-            await interaction.response.edit_message(view=self)
-            
-            await interaction.followup.send(f"✅ ปลดแบน **{self.user_name}** เรียบร้อยครับ!", ephemeral=True)
-        except discord.NotFound:
-            await interaction.response.send_message("❌ ไม่พบผู้ใช้นี้ในรายชื่อแบน (อาจจะถูกปลดไปแล้ว)", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"❌ เกิดข้อผิดพลาด: {e}", ephemeral=True)
-
-class BanListView(View):
+# --- 🖥️ DASHBOARD VIEW (Control Panel สุดล้ำ) ---
+class SecurityPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="📜 ดูรายชื่อคนถูกแบน (Show Bans)", style=discord.ButtonStyle.blurple, custom_id="show_bans_btn")
-    async def show_bans(self, interaction: discord.Interaction, button: Button):
-        if not interaction.user.guild_permissions.ban_members:
-            await interaction.response.send_message("❌ คุณไม่มีสิทธิ์ดูรายการแบน", ephemeral=True)
+    @discord.ui.button(label="🔒 LOCKDOWN SERVER", style=discord.ButtonStyle.danger, emoji="🚨", custom_id="panic_btn")
+    async def panic_mode(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in whitelist:
+            await interaction.response.send_message("❌ Access Denied", ephemeral=True)
+            return
+        
+        await interaction.response.send_message("⚠️ INITIATING LOCKDOWN PROTOCOL...", ephemeral=True)
+        guild = interaction.guild
+        try:
+            # ปิดห้อง @everyone ไม่ให้พิมพ์
+            default_role = guild.default_role
+            perms = default_role.permissions
+            perms.send_messages = False
+            perms.add_reactions = False
+            perms.connect = False
+            await default_role.edit(permissions=perms)
+            
+            embed = discord.Embed(title="🚨 SERVER LOCKDOWN ACTIVE", description="เซิร์ฟเวอร์ถูกปิดตายชั่วคราวโดยระบบความปลอดภัย", color=0xFF0000)
+            embed.set_image(url="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Z6eWxsMzZxeWxsMzZxeWxsMzZxeWxsMzZxeWxsMzZxeCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/26tP7axeTIW5vD8TC/giphy.gif")
+            await interaction.channel.send(embed=embed)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Lockdown Failed: {e}", ephemeral=True)
+
+    @discord.ui.button(label="🔓 UNLOCK SERVER", style=discord.ButtonStyle.success, emoji="✅", custom_id="unlock_btn")
+    async def unlock_mode(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in whitelist:
+            await interaction.response.send_message("❌ Access Denied", ephemeral=True)
             return
 
-        bans = [entry async for entry in interaction.guild.bans()]
-        
-        if not bans:
-            await interaction.response.send_message("✅ เซิร์ฟเวอร์นี้สะอาดมาก! ไม่มีใครถูกแบนเลย", ephemeral=True)
-            return
+        guild = interaction.guild
+        default_role = guild.default_role
+        perms = default_role.permissions
+        perms.send_messages = True
+        perms.add_reactions = True
+        perms.connect = True
+        await default_role.edit(permissions=perms)
+        await interaction.response.send_message("✅ Server Unlocked. Normal operations resumed.", ephemeral=True)
 
-        msg = "**📋 รายชื่อผู้ถูกแบน (ล่าสุด):**\n"
-        for entry in bans[:20]:
-            msg += f"• **{entry.user}** (ID: `{entry.user.id}`) - เหตุผล: {entry.reason}\n"
-        
-        if len(bans) > 20:
-            msg += f"\n...และอีก {len(bans)-20} คน"
+    @discord.ui.button(label="📜 Whitelist Info", style=discord.ButtonStyle.primary, emoji="👥", custom_id="wl_info")
+    async def wl_check(self, interaction: discord.Interaction, button: Button):
+        if not whitelist:
+            users_text = "None"
+        else:
+            users_text = "\n".join([f"<@{uid}>" for uid in whitelist])
+            
+        embed = discord.Embed(title="🛡️ Trusted Personnel", description=users_text, color=0x00FFFF)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        await interaction.response.send_message(msg, ephemeral=True)
-
-# --- 🛠️ ฟังก์ชันตรวจสอบและลงโทษ ---
+# --- Logic: ระบบตรวจจับ (Core Security) ---
 async def check_limits(action, member, guild):
-    if member.id in WHITELIST or member.id == bot.user.id:
+    # เช็คว่าเป็นบอทหรือคนใน Whitelist หรือไม่
+    if member.id in whitelist or member.id == bot.user.id:
         return
 
     now = datetime.datetime.now()
-    
     if member.id not in tracker[action]:
         tracker[action][member.id] = []
 
-    limit_seconds = LIMITS[action]["seconds"]
-    tracker[action][member.id] = [t for t in tracker[action][member.id] if (now - t).total_seconds() < limit_seconds]
+    limit_sec = CONFIG["LIMITS"][action]["seconds"]
+    # ลบรายการที่เก่าเกินเวลาออก
+    tracker[action][member.id] = [t for t in tracker[action][member.id] if (now - t).total_seconds() < limit_sec]
     tracker[action][member.id].append(now)
 
-    if len(tracker[action][member.id]) > LIMITS[action]["max"]:
+    # ตรวจสอบว่าเกินลิมิตไหม
+    if len(tracker[action][member.id]) > CONFIG["LIMITS"][action]["max"]:
         try:
-            await guild.ban(member, reason=f"Anti-Nuke: Spamming {action}")
             del tracker[action][member.id]
-
-            log_channel = bot.get_channel(LOG_CHANNEL_ID)
-            if log_channel:
-                embed = discord.Embed(title="🚨 DETECTED NUKER!", color=discord.Color.red(), timestamp=now)
-                embed.add_field(name="User", value=f"{member.mention} (`{member.id}`)", inline=False)
-                embed.add_field(name="Action", value=f"Spamming **{action}**", inline=False)
+            
+            # 🔨 BAN HAMMER (ลงดาบ)
+            await guild.ban(member, reason=f"Security System: {action} Spam")
+            
+            # 📢 Log Notification
+            log_ch = bot.get_channel(CONFIG["LOG_CHANNEL"])
+            if log_ch:
+                embed = discord.Embed(title="🛑 THREAT ELIMINATED", color=0xFF0000, timestamp=now)
+                embed.set_author(name="Cyber Sentinel System", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+                embed.add_field(name="Offender", value=f"{member.mention}\nID: `{member.id}`", inline=True)
+                embed.add_field(name="Violation", value=f"**{action.upper()}** Limit Exceeded", inline=True)
                 embed.set_thumbnail(url=member.avatar.url if member.avatar else None)
-                embed.set_footer(text="Anti-Nuke System")
+                embed.set_footer(text="Auto-Protection Active")
+                
+                # ปุ่มปลดแบนแนบไปกับ Log
+                view = View()
+                unban_btn = Button(label="Unlock User", style=discord.ButtonStyle.green, emoji="🔓")
+                
+                async def unban_callback(interaction):
+                    if interaction.user.id not in whitelist: return
+                    await guild.unban(member)
+                    await interaction.response.send_message(f"✅ Unbanned {member.name}", ephemeral=True)
+                
+                unban_btn.callback = unban_callback
+                view.add_item(unban_btn)
+                
+                await log_ch.send(embed=embed, view=view)
+                
+            print(f"{Fore.RED}[ALERT] Banned {member} for {action}{Style.RESET_ALL}")
 
-                view = UnbanView(user_id=member.id, user_name=member.name)
-                await log_channel.send(embed=embed, view=view)
-            
-            print(f"🚨 BANNED: {member} for {action}")
-            
         except Exception as e:
-            print(f"❌ Failed to ban {member}: {e}")
+            print(f"{Fore.YELLOW}[FAIL] Could not ban {member}: {e}{Style.RESET_ALL}")
 
-# --- 📡 Events ---
+# ==========================================
+# 📡 EVENTS & COMMANDS
+# ==========================================
+
 @bot.event
 async def on_ready():
-    print(f"🛡️ Security Bot Online: {bot.user}")
+    print_banner()
+    # เช็คว่าอยู่ในห้อง Log หรือยัง
+    log_channel = bot.get_channel(CONFIG["LOG_CHANNEL"])
+    if log_channel:
+        print(f"{Fore.GREEN}[OK] Log Channel Connected: #{log_channel.name}")
+    else:
+        print(f"{Fore.RED}[ERR] Log Channel ID Not Found!")
 
+# คำสั่งเรียกแผงควบคุม
 @bot.command()
 async def panel(ctx):
-    if ctx.author.id in WHITELIST or ctx.author.guild_permissions.administrator:
-        embed = discord.Embed(title="🛡️ Admin Control Panel", description="กดปุ่มด้านล่างเพื่อดูรายชื่อคนที่ถูกแบนทั้งหมด", color=discord.Color.blue())
-        view = BanListView()
-        await ctx.send(embed=embed, view=view)
+    if ctx.author.id not in whitelist: return
+    
+    embed = discord.Embed(title="🛡️ CYBER SENTINEL CONTROL", description="Security Command Center", color=0x000000)
+    embed.add_field(name="System Status", value="✅ **ONLINE**", inline=True)
+    embed.add_field(name="Ping", value=f"`{round(bot.latency * 1000)}ms`", inline=True)
+    embed.add_field(name="Security Level", value="🔥🔥 **MAXIMUM**", inline=False)
+    # ใส่รูป GIF ที่นี่
+    embed.set_image(url="https://i.pinimg.com/originals/e8/15/f2/e815f2066fe7b92b6a94a29a4e21d33d.gif") 
+    embed.set_footer(text="Developed by You")
+    
+    view = SecurityPanel()
+    await ctx.send(embed=embed, view=view)
 
-# Event Listeners
+# คำสั่งเพิ่มคนใน Whitelist
+@bot.command()
+async def trust(ctx, member: discord.Member):
+    if ctx.author.id != CONFIG["OWNER_ID"]: return # เฉพาะเจ้าของสูงสุดใช้ได้
+    
+    if member.id not in whitelist:
+        whitelist.append(member.id)
+        save_whitelist(whitelist)
+        await ctx.send(f"✅ **{member.name}** has been added to the Trusted Database.", delete_after=5)
+    else:
+        await ctx.send(f"⚠️ {member.name} is already trusted.", delete_after=5)
+
+# คำสั่งลบคนจาก Whitelist
+@bot.command()
+async def untrust(ctx, member: discord.Member):
+    if ctx.author.id != CONFIG["OWNER_ID"]: return
+    
+    if member.id in whitelist:
+        whitelist.remove(member.id)
+        save_whitelist(whitelist)
+        await ctx.send(f"🚫 **{member.name}** removed from Trusted Database.", delete_after=5)
+
+# --- Event Listeners (Audit Log Monitoring) ---
+# ใช้ Logic เดียวกันวนลูปเพื่อความสั้นกระชับ
+event_map = {
+    'on_guild_channel_create': ('channel_create', discord.AuditLogAction.channel_create),
+    'on_guild_channel_delete': ('channel_delete', discord.AuditLogAction.channel_delete),
+    'on_guild_channel_update': ('channel_update', discord.AuditLogAction.channel_update),
+    'on_guild_role_create': ('role_create', discord.AuditLogAction.role_create),
+    'on_guild_role_delete': ('role_delete', discord.AuditLogAction.role_delete),
+    'on_guild_role_update': ('role_update', discord.AuditLogAction.role_update),
+    'on_member_ban': ('ban_member', discord.AuditLogAction.ban),
+    'on_webhooks_update': ('webhook', discord.AuditLogAction.webhook_create),
+    'on_guild_update': ('guild_update', discord.AuditLogAction.guild_update),
+}
+
+for event_name, (action_key, audit_action) in event_map.items():
+    async def _wrapper(obj, a_key=action_key, a_action=audit_action):
+        # Handle arguments logic (บาง event ส่งมา 1 ตัวแปร บางอัน 2)
+        guild = obj.guild if hasattr(obj, 'guild') else obj
+        if isinstance(obj, tuple): guild = obj[1].guild # กรณี update (before, after)
+
+        async for entry in guild.audit_logs(limit=1, action=a_action):
+            await check_limits(a_key, entry.user, guild)
+            
+    bot.add_listener(_wrapper, event_name)
+
+# แยก Kick event เพราะ Logic ต่างนิดหน่อย
 @bot.event
-async def on_guild_channel_create(channel):
-    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
-        await check_limits("channel_create", entry.user, channel.guild)
+async def on_member_remove(member):
+    async for entry in member.guild.audit_logs(limit=1, action=discord.AuditLogAction.kick):
+        if entry.target.id == member.id:
+             await check_limits("kick_member", entry.user, member.guild)
 
-@bot.event
-async def on_guild_channel_delete(channel):
-    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-        await check_limits("channel_delete", entry.user, channel.guild)
-
-@bot.event
-async def on_guild_role_create(role):
-    async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_create):
-        await check_limits("role_create", entry.user, role.guild)
-
-@bot.event
-async def on_member_ban(guild, user):
-    async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
-        await check_limits("ban_member", entry.user, guild)
-
-@bot.event
-async def on_webhooks_update(channel):
-    async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.webhook_create):
-        await check_limits("webhook", entry.user, channel.guild)
-
-# รัน Server
+# Start
 server_on()
-
-# ✅ รันบอท (ต้องตั้งค่าตัวแปร TOKEN ใน Secrets ของ Replit หรือ Environment Variables ของเครื่อง)
 try:
+    if not os.getenv('TOKEN'):
+        print("⚠️ WARNING: Token not found in Environment Variables!")
     bot.run(os.getenv('TOKEN'))
 except Exception as e:
-    print(f"❌ Error starting bot: {e}")
-    print("⚠️ อย่าลืมตรวจสอบว่าใส่ TOKEN ใน Secrets ถูกต้องหรือไม่")
+    print(f"❌ Error: {e}
