@@ -73,7 +73,7 @@ def print_banner():
     """
     print(banner)
 
-# --- 🖥️ BUTTONS VIEW (ปุ่มกด) ---
+# --- 🖥️ BUTTONS VIEW (SMART LOCKDOWN) ---
 class SecurityPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -84,9 +84,32 @@ class SecurityPanel(View):
             await interaction.response.send_message("❌ Access Denied", ephemeral=True)
             return
         
-        await interaction.response.send_message("⚠️ INITIATING LOCKDOWN PROTOCOL...", ephemeral=True)
+        # แจ้งเตือนก่อนทำงาน (Defer) เพราะการแจกยศอาจใช้เวลา 2-3 วินาที
+        await interaction.response.defer()
+        
         guild = interaction.guild
         try:
+            # 1. สร้างยศพิเศษ "Override Access" (ถ้ายังไม่มี)
+            override_role = discord.utils.get(guild.roles, name="🛡️ Override Access")
+            if not override_role:
+                override_role = await guild.create_role(
+                    name="🛡️ Override Access",
+                    permissions=discord.Permissions(send_messages=True, read_messages=True),
+                    color=discord.Color.green(),
+                    reason="Anti-Nuke Lockdown Bypass"
+                )
+                # พยายามเลื่อนยศนี้ไปไว้สูงๆ (ใต้บอท)
+                try: await override_role.edit(position=guild.me.top_role.position - 1)
+                except: pass
+
+            # 2. แจกยศพิเศษให้คนใน Whitelist (เพื่อให้พิมพ์ได้)
+            for uid in whitelist:
+                member = guild.get_member(uid)
+                if member:
+                    try: await member.add_roles(override_role)
+                    except: pass
+
+            # 3. ปิดปาก @everyone (ห้ามพิมพ์)
             default_role = guild.default_role
             perms = default_role.permissions
             perms.send_messages = False
@@ -94,8 +117,13 @@ class SecurityPanel(View):
             perms.connect = False
             await default_role.edit(permissions=perms)
             
-            embed = discord.Embed(title="🚨 SERVER LOCKDOWN ACTIVE", description="เซิร์ฟเวอร์ถูกปิดตายชั่วคราวโดยระบบความปลอดภัย", color=0xFF0000)
-            await interaction.channel.send(embed=embed)
+            embed = discord.Embed(
+                title="🚨 SERVER LOCKDOWN ACTIVE", 
+                description="✅ **คนใน Whitelist ยังสามารถพิมพ์ได้**\n⛔ **สมาชิกทั่วไปถูกระงับการพิมพ์ชั่วคราว**", 
+                color=0xFF0000
+            )
+            await interaction.followup.send(embed=embed)
+
         except Exception as e:
             await interaction.followup.send(f"❌ Lockdown Failed: {e}", ephemeral=True)
 
@@ -105,14 +133,28 @@ class SecurityPanel(View):
             await interaction.response.send_message("❌ Access Denied", ephemeral=True)
             return
 
+        await interaction.response.defer()
         guild = interaction.guild
-        default_role = guild.default_role
-        perms = default_role.permissions
-        perms.send_messages = True
-        perms.add_reactions = True
-        perms.connect = True
-        await default_role.edit(permissions=perms)
-        await interaction.response.send_message("✅ Server Unlocked.", ephemeral=True)
+        
+        try:
+            # 1. เปิดปาก @everyone คืน
+            default_role = guild.default_role
+            perms = default_role.permissions
+            perms.send_messages = True
+            perms.add_reactions = True
+            perms.connect = True
+            await default_role.edit(permissions=perms)
+
+            # 2. ดึงยศพิเศษคืนจากคนใน Whitelist (หรือลบยศทิ้ง)
+            override_role = discord.utils.get(guild.roles, name="🛡️ Override Access")
+            if override_role:
+                try: await override_role.delete()
+                except: pass # ถ้าลบไม่ได้ก็ปล่อยไว้
+
+            await interaction.followup.send("✅ **Server Unlocked.** กลับสู่สถานะปกติ")
+
+        except Exception as e:
+            await interaction.followup.send(f"❌ Unlock Error: {e}", ephemeral=True)
 
     @discord.ui.button(label="Whitelist Info", style=discord.ButtonStyle.secondary, emoji="📜", custom_id="wl_info")
     async def wl_check(self, interaction: discord.Interaction, button: Button):
@@ -182,14 +224,13 @@ async def on_ready():
     else:
         print(f"{Fore.RED}[ERR] Log Channel ID Not Found!")
 
-# 1. คำสั่ง Limits (UI ใหม่ตามที่ขอ + ปุ่มกด)
+# คำสั่ง Limits (UI ใหม่ตามที่ขอ + ปุ่มกด Smart Lockdown)
 @bot.command()
 async def limits(ctx):
     try: await ctx.message.delete()
     except: pass
     lim = CONFIG["LIMITS"]
     
-    # สร้างข้อความ Config พร้อมใส่สี (ANSI Color) ให้ตัวเลข
     config_text = f"""```ansi
 [ 📂 CHANNELS ]
 • Create Limit [สร้างห้อง] : \u001b[0;36m{lim['channel_create']['max']} actions / {lim['channel_create']['seconds']}s\u001b[0m
@@ -213,16 +254,12 @@ async def limits(ctx):
     embed = discord.Embed(
         title="🔒 SECURITY CONFIGURATION", 
         description=config_text,
-        color=0x2b2d31 # สีเทาเข้ม (Theme Flexzy)
+        color=0x2b2d31
     )
 
-    # Footer Warning
     embed.add_field(name="━━━━━━━━━━━━━━━━━━━━━━━━━━━", value="⚠️ *ผู้ที่ฝ่าฝืนเงื่อนไขด้านบนจะถูก **BAN** ทันทีโดยอัตโนมัติ*", inline=False)
-    
-    # Banner (รูปด้านล่าง)
     embed.set_image(url="https://media.discordapp.net/attachments/1160547793782439976/118672000000000000/banner.png") 
     
-    # ส่งพร้อมปุ่มกด
     await ctx.send(embed=embed, view=SecurityPanel())
 
 # Trust System
