@@ -17,18 +17,19 @@ init(autoreset=True)
 CONFIG = {
     "PREFIX": "!",
     "LOG_CHANNEL": 1437395517545123860, # 🔴 ใส่ ID ห้อง Log ของคุณ
-    "OWNER_ID": 1160547793782439976,    # 👑 ใส่ ID เจ้าของคนเดียวพอ (เดี๋ยวเพื่อนไปใช้คำสั่ง trust เอา)
+    "OWNER_ID": 1160547793782439976,    # 👑 ใส่ ID เจ้าของคนเดียวพอ
     
     # 🛡️ ความไวในการจับ (Sensitivity)
+    # "max": จำนวนครั้ง, "seconds": วินาที
     "LIMITS": {
         "channel_create": {"max": 3, "seconds": 10},
-        "channel_delete": {"max": 3, "seconds": 10},
-        "channel_update": {"max": 5, "seconds": 10},
+        "channel_delete": {"max": 1, "seconds": 10},
+        "channel_update": {"max": 1, "seconds": 10},
         "role_create":    {"max": 3, "seconds": 10},
-        "role_delete":    {"max": 2, "seconds": 10},
-        "role_update":    {"max": 5, "seconds": 10},
-        "ban_member":     {"max": 3, "seconds": 10},
-        "kick_member":    {"max": 3, "seconds": 10},
+        "role_delete":    {"max": 1, "seconds": 10},
+        "role_update":    {"max": 1, "seconds": 10},
+        "ban_member":     {"max": 1, "seconds": 10},
+        "kick_member":    {"max": 2, "seconds": 10},
         "webhook":        {"max": 1, "seconds": 60}, 
         "guild_update":   {"max": 1, "seconds": 60},
     }
@@ -73,7 +74,7 @@ def print_banner():
     """
     print(banner)
 
-# --- 🖥️ DASHBOARD VIEW ---
+# --- 🖥️ DASHBOARD VIEW (PANEL) ---
 class SecurityPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -183,6 +184,7 @@ async def on_ready():
     else:
         print(f"{Fore.RED}[ERR] Log Channel ID Not Found!")
 
+# คำสั่ง Panel ควบคุมหลัก
 @bot.command()
 async def panel(ctx):
     if ctx.author.id not in whitelist: return
@@ -197,6 +199,55 @@ async def panel(ctx):
     view = SecurityPanel()
     await ctx.send(embed=embed, view=view)
 
+# 🆕 คำสั่งโชว์กฎ Limits (Flexzy Style UI)
+@bot.command()
+async def limits(ctx):
+    try: await ctx.message.delete()
+    except: pass
+    lim = CONFIG["LIMITS"]
+    
+    # สร้าง Embed หลัก
+    embed = discord.Embed(
+        title="🛡️ SECURITY THRESHOLDS", 
+        description="> **Active Protection Status: `ONLINE`**\n━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        color=0x2b2d31 # สีเทาเข้ม (Theme Dark)
+    )
+
+    # 1. กล่อง Channel Config (สีฟ้า)
+    chan_info = (
+        f"Create: \u001b[0;36m{lim['channel_create']['max']} / {lim['channel_create']['seconds']}s\u001b[0m\n"
+        f"Delete: \u001b[0;36m{lim['channel_delete']['max']} / {lim['channel_delete']['seconds']}s\u001b[0m\n"
+        f"Update: \u001b[0;36m{lim['channel_update']['max']} / {lim['channel_update']['seconds']}s\u001b[0m"
+    )
+    embed.add_field(name="📂 **Channel Config**", value=f"```ansi\n{chan_info}```", inline=False)
+
+    # 2. กล่อง Role Config (สีชมพู)
+    role_info = (
+        f"Create: \u001b[0;35m{lim['role_create']['max']} / {lim['role_create']['seconds']}s\u001b[0m\n"
+        f"Delete: \u001b[0;35m{lim['role_delete']['max']} / {lim['role_delete']['seconds']}s\u001b[0m\n"
+        f"Update: \u001b[0;35m{lim['role_update']['max']} / {lim['role_update']['seconds']}s\u001b[0m"
+    )
+    embed.add_field(name="🪪 **Role Config**", value=f"```ansi\n{role_info}```", inline=False)
+
+    # 3. กล่อง Critical Config (สีแดง)
+    danger_info = (
+        f"Ban/Kick : \u001b[0;31m{lim['ban_member']['max']} / {lim['ban_member']['seconds']}s\u001b[0m\n"
+        f"Webhook  : \u001b[0;31m{lim['webhook']['max']} / {lim['webhook']['seconds']}s\u001b[0m\n"
+        f"Server Up: \u001b[0;31m{lim['guild_update']['max']} / {lim['guild_update']['seconds']}s\u001b[0m"
+    )
+    embed.add_field(name="🚨 **Critical Security**", value=f"```ansi\n{danger_info}```", inline=False)
+
+    # Footer
+    footer_text = "\n⚡ **Auto-Ban System Active 24/7**\n⊂⊃ 🔐 **Webhook Protection Enabled**\n⊂⊃ 🛡️ **Anti-Nuke V3 Core System**"
+    embed.add_field(name="\u200b", value=footer_text, inline=False)
+    
+    # Banner Image (เปลี่ยน URL รูปได้)
+    embed.set_image(url="https://media.discordapp.net/attachments/1160547793782439976/118672000000000000/banner.png") 
+    embed.set_footer(text="Cyber Sentinel • Advanced Security", icon_url=bot.user.avatar.url if bot.user.avatar else None)
+
+    await ctx.send(embed=embed)
+
+# คำสั่ง Trust System
 @bot.command()
 async def trust(ctx, member: discord.Member):
     if ctx.author.id != CONFIG["OWNER_ID"]: return
@@ -217,6 +268,7 @@ async def untrust(ctx, member: discord.Member):
         save_whitelist(whitelist)
         await ctx.send(f"🚫 **{member.name}** removed from Trusted Database.", delete_after=5)
 
+# --- Event Listeners ---
 event_map = {
     'on_guild_channel_create': ('channel_create', discord.AuditLogAction.channel_create),
     'on_guild_channel_delete': ('channel_delete', discord.AuditLogAction.channel_delete),
