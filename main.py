@@ -8,7 +8,7 @@ import asyncio
 from colorama import Fore, Style, init
 from myserver import server_on
 
-# Initialize Colorama (ทำสี Terminal)
+# Initialize Colorama
 init(autoreset=True)
 
 # ==========================================
@@ -16,11 +16,10 @@ init(autoreset=True)
 # ==========================================
 CONFIG = {
     "PREFIX": "!",
-    "LOG_CHANNEL": 1437395517545123860, # 🔴 ใส่ ID ห้อง Log ของคุณที่นี่
-    "OWNER_ID": 1160547793782439976,    # 👑 ใส่ ID เจ้าของสูงสุด (กันพลาด)
+    "LOG_CHANNEL": 1437395517545123860, # 🔴 ใส่ ID ห้อง Log ของคุณ
+    "OWNER_ID": 1160547793782439976,    # 👑 ใส่ ID เจ้าของคนเดียวพอ (เดี๋ยวเพื่อนไปใช้คำสั่ง trust เอา)
     
     # 🛡️ ความไวในการจับ (Sensitivity)
-    # "max": จำนวนครั้งที่ทำได้, "seconds": ภายในกี่วินาที
     "LIMITS": {
         "channel_create": {"max": 3, "seconds": 10},
         "channel_delete": {"max": 3, "seconds": 10},
@@ -35,14 +34,13 @@ CONFIG = {
     }
 }
 
-# ไฟล์เก็บข้อมูล Whitelist (ไม่ต้องแก้โค้ดบ่อยๆ)
+# ไฟล์เก็บข้อมูล Whitelist
 DB_FILE = "whitelist.json"
 
 # ==========================================
 # 🛠️ CORE FUNCTIONS
 # ==========================================
 
-# โหลด Whitelist
 def load_whitelist():
     if not os.path.exists(DB_FILE):
         with open(DB_FILE, "w") as f:
@@ -51,7 +49,6 @@ def load_whitelist():
     with open(DB_FILE, "r") as f:
         return json.load(f)
 
-# บันทึก Whitelist
 def save_whitelist(ids):
     with open(DB_FILE, "w") as f:
         json.dump(ids, f)
@@ -61,9 +58,8 @@ tracker = {k: {} for k in CONFIG["LIMITS"].keys()}
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix=CONFIG["PREFIX"], intents=intents, help_command=None)
 
-# --- 🎨 CONSOLE UI (หน้าต่าง Hacker) ---
+# --- 🎨 CONSOLE UI ---
 def print_banner():
-    # เคลียร์หน้าจอ Terminal
     os.system('cls' if os.name == 'nt' else 'clear')
     banner = f"""
     {Fore.CYAN}╔════════════════════════════════════════════╗
@@ -77,7 +73,7 @@ def print_banner():
     """
     print(banner)
 
-# --- 🖥️ DASHBOARD VIEW (Control Panel สุดล้ำ) ---
+# --- 🖥️ DASHBOARD VIEW ---
 class SecurityPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -91,7 +87,6 @@ class SecurityPanel(View):
         await interaction.response.send_message("⚠️ INITIATING LOCKDOWN PROTOCOL...", ephemeral=True)
         guild = interaction.guild
         try:
-            # ปิดห้อง @everyone ไม่ให้พิมพ์
             default_role = guild.default_role
             perms = default_role.permissions
             perms.send_messages = False
@@ -118,7 +113,7 @@ class SecurityPanel(View):
         perms.add_reactions = True
         perms.connect = True
         await default_role.edit(permissions=perms)
-        await interaction.response.send_message("✅ Server Unlocked. Normal operations resumed.", ephemeral=True)
+        await interaction.response.send_message("✅ Server Unlocked.", ephemeral=True)
 
     @discord.ui.button(label="📜 Whitelist Info", style=discord.ButtonStyle.primary, emoji="👥", custom_id="wl_info")
     async def wl_check(self, interaction: discord.Interaction, button: Button):
@@ -126,13 +121,11 @@ class SecurityPanel(View):
             users_text = "None"
         else:
             users_text = "\n".join([f"<@{uid}>" for uid in whitelist])
-            
         embed = discord.Embed(title="🛡️ Trusted Personnel", description=users_text, color=0x00FFFF)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# --- Logic: ระบบตรวจจับ (Core Security) ---
+# --- Logic: Core Security ---
 async def check_limits(action, member, guild):
-    # เช็คว่าเป็นบอทหรือคนใน Whitelist หรือไม่
     if member.id in whitelist or member.id == bot.user.id:
         return
 
@@ -141,19 +134,15 @@ async def check_limits(action, member, guild):
         tracker[action][member.id] = []
 
     limit_sec = CONFIG["LIMITS"][action]["seconds"]
-    # ลบรายการที่เก่าเกินเวลาออก
     tracker[action][member.id] = [t for t in tracker[action][member.id] if (now - t).total_seconds() < limit_sec]
     tracker[action][member.id].append(now)
 
-    # ตรวจสอบว่าเกินลิมิตไหม
     if len(tracker[action][member.id]) > CONFIG["LIMITS"][action]["max"]:
         try:
             del tracker[action][member.id]
             
-            # 🔨 BAN HAMMER (ลงดาบ)
             await guild.ban(member, reason=f"Security System: {action} Spam")
             
-            # 📢 Log Notification
             log_ch = bot.get_channel(CONFIG["LOG_CHANNEL"])
             if log_ch:
                 embed = discord.Embed(title="🛑 THREAT ELIMINATED", color=0xFF0000, timestamp=now)
@@ -163,7 +152,6 @@ async def check_limits(action, member, guild):
                 embed.set_thumbnail(url=member.avatar.url if member.avatar else None)
                 embed.set_footer(text="Auto-Protection Active")
                 
-                # ปุ่มปลดแบนแนบไปกับ Log
                 view = View()
                 unban_btn = Button(label="Unlock User", style=discord.ButtonStyle.green, emoji="🔓")
                 
@@ -189,14 +177,12 @@ async def check_limits(action, member, guild):
 @bot.event
 async def on_ready():
     print_banner()
-    # เช็คว่าอยู่ในห้อง Log หรือยัง
     log_channel = bot.get_channel(CONFIG["LOG_CHANNEL"])
     if log_channel:
         print(f"{Fore.GREEN}[OK] Log Channel Connected: #{log_channel.name}")
     else:
         print(f"{Fore.RED}[ERR] Log Channel ID Not Found!")
 
-# คำสั่งเรียกแผงควบคุม
 @bot.command()
 async def panel(ctx):
     if ctx.author.id not in whitelist: return
@@ -205,17 +191,15 @@ async def panel(ctx):
     embed.add_field(name="System Status", value="✅ **ONLINE**", inline=True)
     embed.add_field(name="Ping", value=f"`{round(bot.latency * 1000)}ms`", inline=True)
     embed.add_field(name="Security Level", value="🔥🔥 **MAXIMUM**", inline=False)
-    # ใส่รูป GIF ที่นี่
-    embed.set_image(url="https://i.pinimg.com/originals/e8/15/f2/e815f2066fe7b92b6a94a29a4e21d33d.gif") 
+    embed.set_image(url="https://i.pinimg.com/originals/e8/15/f2/e815f2066fe7b92b6a94a29a4e21d33d.gif")
     embed.set_footer(text="Developed by You")
     
     view = SecurityPanel()
     await ctx.send(embed=embed, view=view)
 
-# คำสั่งเพิ่มคนใน Whitelist
 @bot.command()
 async def trust(ctx, member: discord.Member):
-    if ctx.author.id != CONFIG["OWNER_ID"]: return # เฉพาะเจ้าของสูงสุดใช้ได้
+    if ctx.author.id != CONFIG["OWNER_ID"]: return
     
     if member.id not in whitelist:
         whitelist.append(member.id)
@@ -224,7 +208,6 @@ async def trust(ctx, member: discord.Member):
     else:
         await ctx.send(f"⚠️ {member.name} is already trusted.", delete_after=5)
 
-# คำสั่งลบคนจาก Whitelist
 @bot.command()
 async def untrust(ctx, member: discord.Member):
     if ctx.author.id != CONFIG["OWNER_ID"]: return
@@ -234,8 +217,6 @@ async def untrust(ctx, member: discord.Member):
         save_whitelist(whitelist)
         await ctx.send(f"🚫 **{member.name}** removed from Trusted Database.", delete_after=5)
 
-# --- Event Listeners (Audit Log Monitoring) ---
-# ใช้ Logic เดียวกันวนลูปเพื่อความสั้นกระชับ
 event_map = {
     'on_guild_channel_create': ('channel_create', discord.AuditLogAction.channel_create),
     'on_guild_channel_delete': ('channel_delete', discord.AuditLogAction.channel_delete),
@@ -250,16 +231,14 @@ event_map = {
 
 for event_name, (action_key, audit_action) in event_map.items():
     async def _wrapper(obj, a_key=action_key, a_action=audit_action):
-        # Handle arguments logic (บาง event ส่งมา 1 ตัวแปร บางอัน 2)
         guild = obj.guild if hasattr(obj, 'guild') else obj
-        if isinstance(obj, tuple): guild = obj[1].guild # กรณี update (before, after)
+        if isinstance(obj, tuple): guild = obj[1].guild
 
         async for entry in guild.audit_logs(limit=1, action=a_action):
             await check_limits(a_key, entry.user, guild)
             
     bot.add_listener(_wrapper, event_name)
 
-# แยก Kick event เพราะ Logic ต่างนิดหน่อย
 @bot.event
 async def on_member_remove(member):
     async for entry in member.guild.audit_logs(limit=1, action=discord.AuditLogAction.kick):
@@ -273,4 +252,4 @@ try:
         print("⚠️ WARNING: Token not found in Environment Variables!")
     bot.run(os.getenv('TOKEN'))
 except Exception as e:
-    print(f"❌ Error: {e}
+    print(f"❌ Error: {e}")
